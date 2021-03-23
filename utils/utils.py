@@ -264,7 +264,7 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
             invalid = large_overlap & label_match
             weights = detections[invalid, 4:5]
             # Merge overlapping bboxes by order of confidence
-            detections[0, :4] = (weights * detections[invalid, :4]).sum(0) / weights.sum()
+            detections[0, :4] = (weights * detections[invalid, :4]).sum(0) / weights.sum() # optional
             keep_boxes += [detections[0]]
             detections = detections[~invalid]
         if keep_boxes:

@@ -7,14 +7,16 @@ from utils.datasets import *
 from utils.augmentations import *
 from utils.transforms import *
 from utils.parse_config import *
-from test import evaluate
+from test import evaluate2
 
 from terminaltables import AsciiTable
+
 
 import os
 import sys
 import time
 import datetime
+from pathlib import Path
 import argparse
 import tqdm
 
@@ -28,11 +30,9 @@ import torch.optim as optim
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=100, help="number of epochs")
-    parser.add_argument("--batch_size", type=int, default=8, help="size of each image batch")
+    parser.add_argument("--epochs", type=int, default=200, help="number of epochs")
     parser.add_argument("--gradient_accumulations", type=int, default=2, help="number of gradient accums before step")
-    parser.add_argument("--model_def", type=str, default="config/yolov3.cfg", help="path to model definition file")
-    parser.add_argument("--data_config", type=str, default="config/coco.data", help="path to data config file")
+    parser.add_argument("--data_config", type=str, default="config/custom.data", help="path to data config file")
     parser.add_argument("--pretrained_weights", type=str, help="if specified starts from checkpoint model")
     parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
     parser.add_argument("--img_size", type=int, default=416, help="size of each image dimension")
@@ -45,6 +45,17 @@ if __name__ == "__main__":
     opt = parser.parse_args()
     print(opt)
 
+
+    batch_size = 32
+    datafolder = Path(os.getcwd()).parent / 'blood_txt'
+    images_train_path = datafolder / 'train_images.txt'
+    labels_train_path = datafolder / 'train_labels.txt'
+    images_valid_path = datafolder / 'valid_images.txt'
+    labels_valid_path = datafolder / 'valid_labels.txt'
+    class_names = ['Platelets', 'RBC', 'WBC']
+    
+    model_def = Path(os.getcwd()) / 'config' / 'yolov3-custom.cfg'
+
     logger = Logger(opt.logdir)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -52,35 +63,40 @@ if __name__ == "__main__":
     os.makedirs("output", exist_ok=True)
     os.makedirs("checkpoints", exist_ok=True)
 
-    # Get data configuration
-    data_config = parse_data_config(opt.data_config)
-    train_path = data_config["train"]
-    valid_path = data_config["valid"]
-    class_names = load_classes(data_config["names"])
-
     # Initiate model
-    model = Darknet(opt.model_def).to(device)
-    model.apply(weights_init_normal)
+    model = morf_yolov3(
+        "config/yolov3-tiny.cfg", 
+        "weights/yolov3-tiny.weights", 
+        3,
+        None,
+        True,
+    )
+    model.to(device)
 
+
+    start_epoch = 0
+    checkpoints_path = "checkpoints"
     # If specified we start from checkpoint
-    if opt.pretrained_weights:
-        if opt.pretrained_weights.endswith(".pth"):
-            model.load_state_dict(torch.load(opt.pretrained_weights))
-        else:
-            model.load_darknet_weights(opt.pretrained_weights)
+    chkps = os.listdir(checkpoints_path)
+    if len(chkps)>0:
+        pretrained_weights = sorted(chkps, key=lambda x: int(x.split('.')[0].split('_')[-1]))[-1]
+        model.load_state_dict(torch.load(os.path.join(checkpoints_path, pretrained_weights)))
+        start_epoch = int(pretrained_weights.split('.')[0].split('_')[-1])+1
+
 
     # Get dataloader
-    dataset = ListDataset(train_path, multiscale=opt.multiscale_training, img_size=opt.img_size, transform=AUGMENTATION_TRANSFORMS)
+    dataset = ListDataset2(images_train_path, labels_train_path, multiscale=opt.multiscale_training, img_size=opt.img_size, transform=AUGMENTATION_TRANSFORMS)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=opt.batch_size,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=opt.n_cpu,
         pin_memory=True,
         collate_fn=dataset.collate_fn,
     )
 
-    optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=0.00001)
 
     metrics = [
         "grid_size",
@@ -99,7 +115,7 @@ if __name__ == "__main__":
         "conf_noobj",
     ]
 
-    for epoch in range(opt.epochs):
+    for epoch in range(start_epoch, opt.epochs+start_epoch):
         model.train()
         start_time = time.time()
         for batch_i, (_, imgs, targets) in enumerate(tqdm.tqdm(dataloader, desc=f"Training Epoch {epoch}")):
@@ -156,14 +172,16 @@ if __name__ == "__main__":
         if epoch % opt.evaluation_interval == 0:
             print("\n---- Evaluating Model ----")
             # Evaluate the model on the validation set
-            metrics_output = evaluate(
+            metrics_output = evaluate2(
                 model,
-                path=valid_path,
+                images_valid_path,
+                labels_valid_path,
                 iou_thres=0.5,
                 conf_thres=0.5,
                 nms_thres=0.5,
                 img_size=opt.img_size,
-                batch_size=8,
+                batch_size=batch_size,
+                device=device,
             )
             
             if metrics_output is not None:

@@ -342,3 +342,54 @@ class Darknet(nn.Module):
                 conv_layer.weight.data.cpu().numpy().tofile(fp)
 
         fp.close()
+
+
+def morf_yolov3(
+    model_def, 
+    weights_path, 
+    custom_classes_n,
+    device=None,
+    freeze_old=False,
+):
+    """
+        Function to load and replace Yolo and convs before 
+        them to make net be usable for custom dataset
+    """
+    model = Darknet(model_def)
+    model.load_darknet_weights(weights_path)
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    yolo_layers_places = []
+    for i, seq in enumerate(model.module_list):
+        if isinstance(seq[0], YOLOLayer):
+            yolo_layers_places.append(i)
+
+
+    for module_i in yolo_layers_places:
+        seq = nn.Sequential()
+        module = model.module_list[module_i][0]
+        args = [module.anchors, custom_classes_n, module.img_dim]
+        seq.add_module(f"yolo_{module_i}", YOLOLayer(*args))
+        model.module_list[module_i] = seq
+
+
+        module_i -= 1 # for conv before YoloLayer
+        seq = nn.Sequential()
+        module = model.module_list[module_i][0]
+        seq.add_module(
+            f"conv_{module_i}",
+            nn.Conv2d(
+                in_channels=module.in_channels,
+                out_channels=3*(custom_classes_n+5),
+                kernel_size=(1,1),
+                stride=(1, 1),
+                padding=(0, 0),
+                bias=True
+            ),
+        )
+        model.module_list[module_i] = seq
+        
+    if device:
+        model.to(device)
+    return model

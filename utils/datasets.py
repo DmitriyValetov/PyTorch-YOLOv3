@@ -66,7 +66,7 @@ class ImageFolder(Dataset):
 class ListDataset(Dataset):
     def __init__(self, list_path, img_size=416, multiscale=True, transform=None):
         with open(list_path, "r") as file:
-            self.img_files = file.readlines()
+            self.img_files = file.readlines()[:1000]
 
         self.label_files = [
             path.replace("images", "labels").replace(".png", ".txt").replace(".jpg", ".txt")
@@ -145,3 +145,20 @@ class ListDataset(Dataset):
 
     def __len__(self):
         return len(self.img_files)
+
+
+class ListDataset2(ListDataset):
+    def __init__(self, images_list_path, labels_list_path, img_size=416, multiscale=True, transform=None):
+        with open(images_list_path, "r") as file:
+            self.img_files = file.readlines()
+
+        with open(labels_list_path, "r") as file:
+            self.label_files = file.readlines()
+
+        self.img_size = img_size
+        self.max_objects = 100
+        self.multiscale = multiscale
+        self.min_size = self.img_size - 3 * 32
+        self.max_size = self.img_size + 3 * 32
+        self.batch_count = 0
+        self.transform = transform
